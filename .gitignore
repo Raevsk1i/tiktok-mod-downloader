@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tool cache (downloaded apktool / uber-apk-signer jars)
+.toolcache/
+.cache/
+
+# Pipeline scratch + outputs
+work/
+out/
+*.apk
+*.apk.idsig
+*.xapk
+*.apks
+*.apkm
+*.keystore
+*.jks
+
+# pytest
+.pytest_cache/
