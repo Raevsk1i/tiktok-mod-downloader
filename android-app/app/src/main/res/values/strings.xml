@@ -2,10 +2,13 @@
     <string name="app_name">TikTok Region Patcher</string>
     <string name="title">Патч региона TikTok</string>
     <string name="status_idle">Готов к работе</string>
-    <string name="info_default">1. Установите TikTok с Play Store или APK.\n2. Нажмите «Пропатчить установленный TikTok».\n3. Приложение скопирует APK, подменит регион (de / 262) и предложит установку.\n\nЕсли установка не удаётся — сначала удалите оригинальный TikTok (кнопка ниже).</string>
+    <string name="info_default">1. Установите TikTok с Play Store или APK.\n2. Нажмите «Пропатчить установленный TikTok».\n3. Удалите оригинальный TikTok (подпись патча другая).\n4. Нажмите «Установить пропатченный TikTok».\n\nПропатченный APK нельзя ставить поверх оригинала — это даёт ошибку INSTALL_FAILED_UPDATE.</string>
     <string name="btn_patch">Пропатчить установленный TikTok</string>
     <string name="btn_pick_apk">Выбрать APK / XAPK из файлов</string>
-    <string name="btn_uninstall_tiktok">Удалить TikTok (перед установкой патча)</string>
+    <string name="btn_uninstall_tiktok">Удалить TikTok (обязательно перед установкой патча)</string>
+    <string name="btn_install_patched">Установить пропатченный TikTok</string>
+    <string name="uninstall_required">Патч готов.\n\nСначала удалите оригинальный TikTok — пропатченный APK подписан другим ключом и не может установиться поверх него.\n\n1. Нажмите «Удалить TikTok» ниже\n2. Подтвердите удаление в системе\n3. Вернитесь сюда и нажмите «Установить пропатченный TikTok»</string>
+    <string name="install_blocked_still_installed">TikTok всё ещё установлен. Удалите его, затем нажмите «Установить пропатченный TikTok».</string>
     <string name="tiktok_found">Найден TikTok: %1$s</string>
     <string name="tiktok_not_found">TikTok не установлен. Установите его или выберите APK вручную.</string>
     <string name="working">Работаю… (патч dex может занять 2–5 минут)</string>

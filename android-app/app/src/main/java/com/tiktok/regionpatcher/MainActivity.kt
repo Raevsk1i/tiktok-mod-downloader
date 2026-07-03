@@ -1,14 +1,21 @@
 package com.tiktok.regionpatcher
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import com.tiktok.regionpatcher.core.InstallErrorMapper
+import com.tiktok.regionpatcher.core.PackageInstallHelper
 import com.tiktok.regionpatcher.core.PatchCancelledException
 import com.tiktok.regionpatcher.core.PatchPipeline
 import com.tiktok.regionpatcher.core.TikTokDetector
@@ -27,6 +34,22 @@ class MainActivity : AppCompatActivity() {
     private val pipeline by lazy { PatchPipeline(this) }
     private var detectedPackage: String? = null
     private var patchJob: Job? = null
+    private var pendingInstall: PatchPipeline.Result? = null
+
+    private val installResultReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != InstallResultReceiver.ACTION_INSTALL_RESULT) return
+            val success = intent.getBooleanExtra(InstallResultReceiver.EXTRA_SUCCESS, false)
+            val message = intent.getStringExtra(InstallResultReceiver.EXTRA_MESSAGE).orEmpty()
+            if (success) {
+                pendingInstall = null
+                updateInstallButton()
+                setStatus(message)
+            } else {
+                showInstallError(message)
+            }
+        }
+    }
 
     private val pickApkLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -56,16 +79,39 @@ class MainActivity : AppCompatActivity() {
             pickApkLauncher.launch(arrayOf("application/*", "application/vnd.android.package-archive", "*/*"))
         }
 
+        binding.installButton.setOnClickListener {
+            installPendingPatch()
+        }
+
         binding.uninstallButton.setOnClickListener {
-            val pkg = detectedPackage ?: TikTokDetector.PACKAGE_CANDIDATES.first()
+            val pkg = pendingInstall?.packageName
+                ?: detectedPackage
+                ?: TikTokDetector.PACKAGE_CANDIDATES.first()
             val intent = Intent(Intent.ACTION_DELETE, "package:$pkg".toUri())
             startActivity(intent)
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(InstallResultReceiver.ACTION_INSTALL_RESULT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(installResultReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(installResultReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(installResultReceiver)
+    }
+
     override fun onResume() {
         super.onResume()
         refreshTikTokStatus()
+        updateInstallButton()
     }
 
     private fun refreshTikTokStatus() {
@@ -77,7 +123,9 @@ class MainActivity : AppCompatActivity() {
                 "\n\n" + getString(R.string.info_default)
         } else {
             detectedPackage = null
-            binding.uninstallButton.visibility = View.GONE
+            if (pendingInstall == null) {
+                binding.uninstallButton.visibility = View.GONE
+            }
             binding.infoText.text = getString(R.string.info_default)
         }
     }
@@ -134,8 +182,7 @@ class MainActivity : AppCompatActivity() {
                 val result = withContext(Dispatchers.Default) {
                     block { !isActive }
                 }
-                setStatus(getString(R.string.install_prompt) + "\n" + result.report.summary())
-                pipeline.installApks(result.signedApks, result.packageName)
+                onPatchComplete(result)
             } catch (_: PatchCancelledException) {
                 setStatus("Патч отменён")
             } catch (_: OutOfMemoryError) {
@@ -152,6 +199,73 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun onPatchComplete(result: PatchPipeline.Result) {
+        val packageName = PackageInstallHelper.resolvePackageName(
+            this,
+            result.signedApks,
+            result.packageName,
+        )
+        val resolved = result.copy(packageName = packageName)
+        pendingInstall = resolved
+        updateInstallButton()
+
+        if (PackageInstallHelper.needsUninstallFirst(this, packageName)) {
+            binding.uninstallButton.visibility = View.VISIBLE
+            setStatus(
+                getString(R.string.uninstall_required) + "\n\n" + resolved.report.summary(),
+            )
+            return
+        }
+
+        setStatus(getString(R.string.install_prompt) + "\n" + resolved.report.summary())
+        pipeline.installApks(resolved.signedApks, resolved.packageName)
+    }
+
+    private fun installPendingPatch() {
+        val pending = pendingInstall
+        if (pending == null) {
+            setStatus("Сначала создайте патч")
+            return
+        }
+        val packageName = PackageInstallHelper.resolvePackageName(
+            this,
+            pending.signedApks,
+            pending.packageName,
+        )
+        if (PackageInstallHelper.needsUninstallFirst(this, packageName)) {
+            binding.uninstallButton.visibility = View.VISIBLE
+            setStatus(getString(R.string.install_blocked_still_installed))
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            )
+            startActivity(intent)
+            setStatus("Разрешите установку из этого приложения и нажмите снова")
+            return
+        }
+        setStatus(getString(R.string.install_prompt))
+        pipeline.installApks(pending.signedApks, pending.packageName)
+    }
+
+    private fun updateInstallButton() {
+        val hasPending = pendingInstall != null
+        binding.installButton.visibility = if (hasPending) View.VISIBLE else View.GONE
+        binding.installButton.isEnabled = hasPending && !binding.progressBar.isShown
+    }
+
+    private fun showInstallError(message: String) {
+        val friendly = InstallErrorMapper.translate(message)
+        setStatus("Ошибка установки:\n$friendly")
+        AlertDialog.Builder(this)
+            .setTitle("Ошибка установки")
+            .setMessage(friendly)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
     private fun workDir(): File = File(cacheDir, "patch_work").apply {
         deleteRecursively()
         mkdirs()
@@ -166,6 +280,7 @@ class MainActivity : AppCompatActivity() {
         binding.patchButton.isEnabled = !busy
         binding.pickApkButton.isEnabled = !busy
         binding.uninstallButton.isEnabled = !busy
+        binding.installButton.isEnabled = !busy && pendingInstall != null
         if (busy) setStatus(getString(R.string.working))
     }
 
