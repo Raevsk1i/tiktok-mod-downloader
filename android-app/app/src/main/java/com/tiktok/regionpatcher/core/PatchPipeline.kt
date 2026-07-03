@@ -106,11 +106,14 @@ class PatchPipeline(private val context: Context) {
     }
 
     fun installApks(signedApks: List<File>, packageName: String?) {
-        if (signedApks.size == 1) {
-            installSingle(signedApks.first())
+        val ordered = signedApks.sortedWith(compareBy<File> {
+            !it.name.equals("base.apk", ignoreCase = true)
+        }.thenBy { it.name })
+        if (ordered.size == 1) {
+            installSingle(ordered.first())
             return
         }
-        installMultiple(signedApks, packageName)
+        installMultiple(ordered, packageName)
     }
 
     private fun installSingle(apk: File) {
