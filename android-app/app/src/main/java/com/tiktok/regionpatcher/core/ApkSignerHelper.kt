@@ -24,6 +24,16 @@ object ApkSignerHelper {
     private const val KEY_PASS = "patchpass"
 
     fun sign(context: Context, input: File, output: File) {
+        val aligned = File(input.parentFile, "aligned_${input.name}")
+        try {
+            ZipAligner.align(input, aligned)
+            signAligned(context, aligned, output)
+        } finally {
+            aligned.delete()
+        }
+    }
+
+    private fun signAligned(context: Context, input: File, output: File) {
         val (privateKey, certs) = loadKey(context)
         val signerConfig = ApkSigner.SignerConfig.Builder(KEY_ALIAS, privateKey, certs).build()
         try {

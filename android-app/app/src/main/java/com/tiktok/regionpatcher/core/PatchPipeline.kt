@@ -101,6 +101,9 @@ class PatchPipeline(private val context: Context) {
         signedDir.deleteRecursively()
         val signed = ApkSignerHelper.signAll(context, toSign, signedDir)
 
+        onProgress("Проверяю APK перед установкой…")
+        ApkValidator.validateAll(context, signed)
+
         onProgress("Готово к установке")
         return Result(report, signed, packageName)
     }
