@@ -15,4 +15,8 @@
     <string name="done">Готово!</string>
     <string name="install_prompt">Подтвердите установку в системном диалоге.</string>
     <string name="error_prefix">Ошибка: %1$s</string>
+    <string name="btn_settings">Настройки региона</string>
+    <string name="settings_title">Регион аккаунта</string>
+    <string name="settings_hint">Выберите страну, которую TikTok будет видеть через SIM/сеть. После смены региона нужно заново пропатчить TikTok.</string>
+    <string name="region_current">Регион патча: %1$s</string>
 </resources>

@@ -68,7 +68,7 @@ class PatchPipeline(private val context: Context) {
         packageName: String?,
         isCancelled: (() -> Boolean)?,
     ): Result {
-        val region = RegionConfig()
+        val region = RegionPreferences.load(context)
         val report = PatchReport()
         val patchedDir = File(workDir, "patched_raw")
         patchedDir.mkdirs()

@@ -18,6 +18,7 @@ import com.tiktok.regionpatcher.core.InstallErrorMapper
 import com.tiktok.regionpatcher.core.PackageInstallHelper
 import com.tiktok.regionpatcher.core.PatchCancelledException
 import com.tiktok.regionpatcher.core.PatchPipeline
+import com.tiktok.regionpatcher.core.RegionPreferences
 import com.tiktok.regionpatcher.core.TikTokDetector
 import com.tiktok.regionpatcher.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         refreshTikTokStatus()
+        refreshRegionSummary()
 
         binding.patchButton.setOnClickListener {
             val install = TikTokDetector.findInstalled(this)
@@ -90,6 +92,10 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(Intent.ACTION_DELETE, "package:$pkg".toUri())
             startActivity(intent)
         }
+
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
     }
 
     override fun onStart() {
@@ -111,7 +117,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshTikTokStatus()
+        refreshRegionSummary()
         updateInstallButton()
+    }
+
+    private fun refreshRegionSummary() {
+        binding.regionText.text = getString(
+            R.string.region_current,
+            RegionPreferences.displaySummary(this),
+        )
     }
 
     private fun refreshTikTokStatus() {
@@ -209,15 +223,22 @@ class MainActivity : AppCompatActivity() {
         pendingInstall = resolved
         updateInstallButton()
 
+        val regionSummary = RegionPreferences.displaySummary(this)
         if (PackageInstallHelper.needsUninstallFirst(this, packageName)) {
             binding.uninstallButton.visibility = View.VISIBLE
             setStatus(
-                getString(R.string.uninstall_required) + "\n\n" + resolved.report.summary(),
+                getString(R.string.uninstall_required) + "\n\n" +
+                    getString(R.string.region_current, regionSummary) + "\n\n" +
+                    resolved.report.summary(),
             )
             return
         }
 
-        setStatus(getString(R.string.install_prompt) + "\n" + resolved.report.summary())
+        setStatus(
+            getString(R.string.install_prompt) + "\n" +
+                getString(R.string.region_current, regionSummary) + "\n" +
+                resolved.report.summary(),
+        )
         pipeline.installApks(resolved.signedApks, resolved.packageName)
     }
 
@@ -281,6 +302,7 @@ class MainActivity : AppCompatActivity() {
         binding.pickApkButton.isEnabled = !busy
         binding.uninstallButton.isEnabled = !busy
         binding.installButton.isEnabled = !busy && pendingInstall != null
+        binding.settingsButton.isEnabled = !busy
         if (busy) setStatus(getString(R.string.working))
     }
 
