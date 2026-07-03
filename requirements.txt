@@ -1,0 +1,9 @@
+# Runtime has no third-party Python dependencies (stdlib only).
+# The pipeline shells out to two self-contained Java tools that are
+# downloaded automatically on first use:
+#   - apktool           (decode/rebuild the APK)
+#   - uber-apk-signer   (zipalign + v1/v2/v3 signing, debug-key generation)
+# Java 8+ must be on PATH.
+
+# Development / testing only:
+pytest>=7.0

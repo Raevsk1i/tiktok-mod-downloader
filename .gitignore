@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/*
+!dist/*.apk
+.venv/
+venv/
+
+# Tool cache (downloaded apktool / uber-apk-signer jars)
+.toolcache/
+.cache/
+
+# Pipeline scratch + outputs
+work/
+out/
+*.apk.idsig
+*.xapk
+*.apks
+*.apkm
+*.keystore
+*.jks
+
+# pytest
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/gradle.zip
+android-app/local.properties
