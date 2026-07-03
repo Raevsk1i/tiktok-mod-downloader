@@ -11,7 +11,8 @@ from . import __version__
 from .config import PipelineConfig, RegionValues
 from .patcher import PATCHABLE_METHODS
 from .pipeline import Pipeline
-from .tools import default_cache_dir
+from .tools import ToolError, default_cache_dir
+from .validation import validate_region_values
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -94,16 +95,29 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(message)s",
     )
 
+    log = logging.getLogger("tiktok-region-patcher")
+
+    region_values = RegionValues(
+        country_iso=args.country,
+        operator=args.operator,
+        operator_name=args.operator_name,
+    )
+    try:
+        validate_region_values(region_values)
+    except ValueError as exc:
+        log.error("%s", exc)
+        return 1
+
+    if args.keystore and not (args.keystore_pass and args.key_alias):
+        log.error("--keystore requires --keystore-pass and --key-alias")
+        return 1
+
     cfg = PipelineConfig(
         source=args.source,
         work_dir=args.work_dir.resolve(),
         output_dir=args.output.resolve(),
-        cache_dir=args.cache_dir,
-        region=RegionValues(
-            country_iso=args.country,
-            operator=args.operator,
-            operator_name=args.operator_name,
-        ),
+        cache_dir=args.cache_dir.resolve(),
+        region=region_values,
         keystore=args.keystore,
         keystore_pass=args.keystore_pass,
         key_alias=args.key_alias,
@@ -111,12 +125,16 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
     )
 
-    log = logging.getLogger("tiktok-region-patcher")
     log.info("Patchable TelephonyManager methods: %s", ", ".join(PATCHABLE_METHODS))
 
     try:
         result = Pipeline(cfg).run()
-    except Exception as exc:  # noqa: BLE001 - surface a clean message on the CLI
+    except (ToolError, FileNotFoundError, ValueError, RuntimeError) as exc:
+        log.error("Failed: %s", exc)
+        if args.verbose:
+            raise
+        return 1
+    except Exception as exc:  # noqa: BLE001
         log.error("Failed: %s", exc)
         if args.verbose:
             raise

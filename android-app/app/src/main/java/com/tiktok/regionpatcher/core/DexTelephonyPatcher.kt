@@ -39,6 +39,7 @@ object DexTelephonyPatcher {
         region: RegionConfig,
         report: PatchReport,
         onProgress: ((String) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
     ) {
         val label = input.name
         if (!fileContainsMarker(input)) {
@@ -57,6 +58,7 @@ object DexTelephonyPatcher {
 
         val outClasses = ArrayList<ClassDef>(totalClasses.coerceAtLeast(16))
         for (classDef in dexFile.classes) {
+            if (isCancelled?.invoke() == true) throw PatchCancelledException()
             scanned++
             if (scanned % 2000 == 0) {
                 onProgress?.invoke("$label: классы $scanned / $totalClasses…")
@@ -81,29 +83,6 @@ object DexTelephonyPatcher {
         } else {
             onProgress?.invoke("$label: вызовов не найдено, копирую как есть")
             input.copyTo(output, overwrite = true)
-        }
-    }
-
-    fun patchDexBytes(
-        bytes: ByteArray,
-        region: RegionConfig,
-        report: PatchReport,
-        dexName: String,
-        onProgress: ((String) -> Unit)? = null,
-    ): ByteArray {
-        if (!bytesContainMarker(bytes)) {
-            onProgress?.invoke("$dexName: пропуск (нет TelephonyManager)")
-            return bytes
-        }
-        val tmpIn = File.createTempFile("dex_in_", ".dex")
-        val tmpOut = File.createTempFile("dex_out_", ".dex")
-        try {
-            tmpIn.writeBytes(bytes)
-            patchDexFile(tmpIn, tmpOut, region, report, onProgress)
-            return tmpOut.readBytes()
-        } finally {
-            tmpIn.delete()
-            tmpOut.delete()
         }
     }
 

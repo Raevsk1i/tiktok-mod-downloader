@@ -11,6 +11,7 @@ import com.tiktok.regionpatcher.InstallResultReceiver
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 /**
@@ -28,16 +29,18 @@ class PatchPipeline(private val context: Context) {
         install: TikTokInstall,
         workDir: File,
         onProgress: (String) -> Unit,
+        isCancelled: (() -> Boolean)? = null,
     ): Result {
         onProgress("Копирую APK TikTok…")
         val copied = copyApks(install.apkFiles, File(workDir, "input"))
-        return patchApkSet(copied, workDir, onProgress, install.packageName)
+        return patchApkSet(copied, workDir, onProgress, install.packageName, isCancelled)
     }
 
     fun patchFromUserApk(
         source: File,
         workDir: File,
         onProgress: (String) -> Unit,
+        isCancelled: (() -> Boolean)? = null,
     ): Result {
         onProgress("Разбираю выбранный файл…")
         val apks = if (isBundle(source)) {
@@ -55,7 +58,7 @@ class PatchPipeline(private val context: Context) {
         splits.forEach { split ->
             copied.add(copyFile(split, File(inputDir, split.name)))
         }
-        return patchApkSet(copied, workDir, onProgress, null)
+        return patchApkSet(copied, workDir, onProgress, null, isCancelled)
     }
 
     private fun patchApkSet(
@@ -63,30 +66,27 @@ class PatchPipeline(private val context: Context) {
         workDir: File,
         onProgress: (String) -> Unit,
         packageName: String?,
+        isCancelled: (() -> Boolean)?,
     ): Result {
         val region = RegionConfig()
         val report = PatchReport()
         val patchedDir = File(workDir, "patched_raw")
         patchedDir.mkdirs()
 
-        val baseApk = apks.firstOrNull { it.name.equals("base.apk", ignoreCase = true) }
-            ?: apks.firstOrNull { hasDex(it) }
-            ?: apks.maxByOrNull { apkSize(it) }
-            ?: apks.first()
-        val others = apks.filter { it != baseApk }
-
-        onProgress("Патчу dex в ${baseApk.name} (может занять несколько минут)…")
-        val patchedBase = File(patchedDir, baseApk.name)
-        val baseReport = ApkDexPatcher.patchApk(baseApk, patchedBase, region, onProgress)
-        report.scannedDexFiles += baseReport.scannedDexFiles
-        report.patchedSites += baseReport.patchedSites
-        report.details.addAll(baseReport.details)
-
-        val toSign = mutableListOf(patchedBase)
-        others.forEach { split ->
-            onProgress("Копирую split ${split.name}…")
-            val out = File(patchedDir, split.name)
-            copyFile(split, out)
+        val toSign = mutableListOf<File>()
+        for (apk in apks) {
+            if (isCancelled?.invoke() == true) throw PatchCancelledException()
+            val out = File(patchedDir, apk.name)
+            if (hasDex(apk)) {
+                onProgress("Патчу ${apk.name} (может занять несколько минут)…")
+                val apkReport = ApkDexPatcher.patchApk(apk, out, region, onProgress, isCancelled)
+                report.scannedDexFiles += apkReport.scannedDexFiles
+                report.patchedSites += apkReport.patchedSites
+                report.details.addAll(apkReport.details)
+            } else {
+                onProgress("Копирую ${apk.name}…")
+                copyFile(apk, out)
+            }
             toSign.add(out)
         }
 
@@ -105,12 +105,12 @@ class PatchPipeline(private val context: Context) {
         return Result(report, signed, packageName)
     }
 
-    fun installApks(signedApks: List<File>) {
+    fun installApks(signedApks: List<File>, packageName: String?) {
         if (signedApks.size == 1) {
             installSingle(signedApks.first())
             return
         }
-        installMultiple(signedApks)
+        installMultiple(signedApks, packageName)
     }
 
     private fun installSingle(apk: File) {
@@ -127,9 +127,10 @@ class PatchPipeline(private val context: Context) {
         context.startActivity(intent)
     }
 
-    private fun installMultiple(apks: List<File>) {
+    private fun installMultiple(apks: List<File>, packageName: String?) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        packageName?.let { params.setAppPackageName(it) }
         val sessionId = installer.createSession(params)
         val session = installer.openSession(sessionId)
         try {
@@ -152,6 +153,8 @@ class PatchPipeline(private val context: Context) {
         } catch (e: Exception) {
             session.abandon()
             throw e
+        } finally {
+            session.close()
         }
     }
 
@@ -171,58 +174,17 @@ class PatchPipeline(private val context: Context) {
     }
 
     private fun isBundle(file: File): Boolean {
-        if (!file.name.lowercase().let { it.endsWith(".xapk") || it.endsWith(".apks") || it.endsWith(".apkm") || it.endsWith(".zip") }) {
+        val lower = file.name.lowercase()
+        if (!lower.endsWith(".xapk") && !lower.endsWith(".apks") &&
+            !lower.endsWith(".apkm") && !lower.endsWith(".zip")
+        ) {
             return false
         }
         return try {
             ZipInputStream(FileInputStream(file)).use { zis ->
-                var hasApk = false
                 var entry = zis.nextEntry
                 while (entry != null) {
-                    if (entry.name.lowercase().endsWith(".apk")) {
-                        hasApk = true
-                        break
-                    }
-                    entry = zis.nextEntry
-                }
-                hasApk
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun extractBundle(bundle: File, dest: File): List<File> {
-        dest.mkdirs()
-        val apks = mutableListOf<File>()
-        ZipInputStream(FileInputStream(bundle)).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (entry.name.lowercase().endsWith(".apk")) {
-                    val out = File(dest, File(entry.name).name)
-                    FileOutputStream(out).use { output -> zis.copyTo(output) }
-                    apks.add(out)
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
-        if (apks.isEmpty()) throw IllegalStateException("В архиве нет APK")
-        return apks
-    }
-
-    private fun pickBase(apks: List<File>): File {
-        apks.firstOrNull { it.name.equals("base.apk", ignoreCase = true) }?.let { return it }
-        apks.firstOrNull { it.name.lowercase().startsWith("base") }?.let { return it }
-        return apks.maxByOrNull { apkSize(it) } ?: apks.first()
-    }
-
-    private fun hasDex(apk: File): Boolean {
-        return try {
-            ZipInputStream(FileInputStream(apk)).use { zis ->
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    if (entry.name.matches(Regex("^classes\\d*\\.dex$"))) return true
+                    if (entry.name.lowercase().endsWith(".apk")) return true
                     entry = zis.nextEntry
                 }
                 false
@@ -232,16 +194,65 @@ class PatchPipeline(private val context: Context) {
         }
     }
 
+    private fun extractBundle(bundle: File, dest: File): List<File> {
+        dest.mkdirs()
+        val apks = linkedMapOf<String, File>()
+        ZipInputStream(FileInputStream(bundle)).use { zis ->
+            var entry = zis.nextEntry
+            var index = 0
+            while (entry != null) {
+                val rawName = entry.name.replace('\\', '/')
+                if (rawName.contains("..")) {
+                    entry = zis.nextEntry
+                    continue
+                }
+                if (rawName.lowercase().endsWith(".apk")) {
+                    val baseName = File(rawName).name.ifBlank { "part$index.apk" }
+                    val uniqueName = if (apks.containsKey(baseName)) {
+                        "${index}_$baseName"
+                    } else {
+                        baseName
+                    }
+                    val out = File(dest, uniqueName)
+                    FileOutputStream(out).use { output -> zis.copyTo(output) }
+                    apks[uniqueName] = out
+                    index++
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        }
+        if (apks.isEmpty()) throw IllegalStateException("В архиве нет APK")
+        return apks.values.toList()
+    }
+
+    private fun pickBase(apks: List<File>): File {
+        apks.firstOrNull { it.name.equals("base.apk", ignoreCase = true) }?.let { return it }
+        apks.firstOrNull { it.name.lowercase().startsWith("base") }?.let { return it }
+        return apks.firstOrNull { hasDex(it) }
+            ?: apks.maxByOrNull { apkSize(it) }
+            ?: apks.first()
+    }
+
+    private fun hasDex(apk: File): Boolean {
+        return try {
+            ZipFile(apk).use { zip ->
+                zip.entries().asSequence().any { it.name.matches(Regex("^classes\\d*\\.dex$")) }
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun apkSize(apk: File): Long {
         return try {
             var dexSize = 0L
-            ZipInputStream(FileInputStream(apk)).use { zis ->
-                var entry = zis.nextEntry
-                while (entry != null) {
+            ZipFile(apk).use { zip ->
+                for (entry in zip.entries()) {
                     if (entry.name.matches(Regex("^classes\\d*\\.dex$"))) {
-                        dexSize += entry.size.coerceAtLeast(0)
+                        val size = entry.size
+                        if (size > 0) dexSize += size
                     }
-                    entry = zis.nextEntry
                 }
             }
             if (dexSize > 0) dexSize else apk.length()

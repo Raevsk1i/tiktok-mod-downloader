@@ -94,7 +94,12 @@ def _next_meaningful_line(lines: list[str], start: int) -> int | None:
     return None
 
 
-def patch_smali_text(text: str, region: RegionValues, path: Path | None = None):
+def patch_smali_text(
+    text: str,
+    region: RegionValues,
+    path: Path | None = None,
+    skipped: list[tuple[Path, int, str]] | None = None,
+):
     """Patch a single smali file's text.
 
     Returns ``(new_text, patches)`` where ``patches`` is a list of
@@ -124,14 +129,14 @@ def patch_smali_text(text: str, region: RegionValues, path: Path | None = None):
         move_match = _MOVE_RESULT_RE.match(lines[j]) if j is not None else None
 
         if move_match is None:
-            # The result is discarded (rare) - we cannot cleanly redirect it,
-            # so leave the invoke untouched and record it.
             log.debug(
                 "Skipping %s at %s:%d (no move-result-object)",
                 method,
                 path,
                 i + 1,
             )
+            if skipped is not None and path is not None:
+                skipped.append((path, i + 1, f"no move-result for {method}"))
             out.append(line)
             i += 1
             continue
@@ -183,9 +188,11 @@ def patch_tree(smali_root: Path, region: RegionValues) -> PatchReport:
             continue
         report.referencing_files += 1
 
-        new_text, patches = patch_smali_text(text, region, path=smali)
+        new_text, patches = patch_smali_text(text, region, path=smali, skipped=report.skipped)
         if new_text is not None:
-            smali.write_text(new_text, encoding="utf-8", errors="surrogateescape")
+            tmp = smali.with_suffix(smali.suffix + ".tmp")
+            tmp.write_text(new_text, encoding="utf-8", errors="surrogateescape")
+            tmp.replace(smali)
             report.patches.extend(patches)
             for p in patches:
                 log.info(

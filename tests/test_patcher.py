@@ -66,16 +66,17 @@ def test_debug_directive_between_invoke_and_move_result_is_kept():
     assert 'const-string v3, "de"' in new_text
 
 
-def test_result_discarded_is_not_patched():
-    # No move-result-object follows -> we must leave the invoke alone.
+def test_result_discarded_is_recorded_in_skipped():
     smali = (
         "    invoke-virtual {v1}, Landroid/telephony/TelephonyManager;"
         "->getSimOperator()Ljava/lang/String;\n"
         "    return-void\n"
     )
-    new_text, patches = patch_smali_text(smali, REGION)
+    skipped: list = []
+    new_text, patches = patch_smali_text(smali, REGION, path=Path("Test.smali"), skipped=skipped)
     assert new_text is None
     assert patches == []
+    assert len(skipped) == 1
 
 
 def test_non_string_method_untouched():

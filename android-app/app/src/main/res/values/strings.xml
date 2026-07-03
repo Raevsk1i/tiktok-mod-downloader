@@ -9,6 +9,7 @@
     <string name="tiktok_found">Найден TikTok: %1$s</string>
     <string name="tiktok_not_found">TikTok не установлен. Установите его или выберите APK вручную.</string>
     <string name="working">Работаю… (патч dex может занять 2–5 минут)</string>
-    <string name="done">Готово! Подтвердите установку в системном диалоге.</string>
+    <string name="done">Готово!</string>
+    <string name="install_prompt">Подтвердите установку в системном диалоге.</string>
     <string name="error_prefix">Ошибка: %1$s</string>
 </resources>

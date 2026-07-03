@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import PipelineConfig
 from .downloader import ApkSet, resolve_source
 from .patcher import PatchReport, find_smali_roots, patch_tree
-from .tools import ToolManager
+from .tools import ToolError, ToolManager
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +26,8 @@ class PipelineResult:
 
     def install_hint(self) -> str:
         if len(self.signed_apks) == 1:
-            return f"adb install -r \"{self.signed_apks[0]}\""
-        joined = " ".join(f'"{p}"' for p in self.signed_apks)
+            return f"adb install -r {shlex.quote(str(self.signed_apks[0]))}"
+        joined = " ".join(shlex.quote(str(p)) for p in self.signed_apks)
         return f"adb install-multiple -r {joined}"
 
 
@@ -34,14 +36,11 @@ class Pipeline:
         self.cfg = config
         self.tools = ToolManager(config.cache_dir)
 
-    # ---------------------------------------------------------------- steps
     def _decode(self, base_apk: Path) -> Path:
         decoded = self.cfg.work_dir / "decoded"
         if decoded.exists():
             shutil.rmtree(decoded)
         log.info("Decoding %s with apktool ...", base_apk.name)
-        # -r keeps resources as-is (faster, avoids resource recompile issues);
-        # we only touch smali. -f overwrites any stale output.
         self.tools.apktool("d", "-f", "-r", str(base_apk), "-o", str(decoded))
         return decoded
 
@@ -59,6 +58,11 @@ class Pipeline:
             report.patches.extend(sub.patches)
             report.skipped.extend(sub.skipped)
         log.info("Patch summary: %s", report.summary())
+        if report.skipped:
+            log.warning(
+                "%d TelephonyManager invoke(s) could not be patched safely",
+                len(report.skipped),
+            )
         return report
 
     def _build(self, decoded: Path) -> Path:
@@ -75,35 +79,36 @@ class Pipeline:
         return rebuilt
 
     def _sign(self, apks: list[Path]) -> list[Path]:
-        self.cfg.output_dir.mkdir(parents=True, exist_ok=True)
-        args: list[str] = []
+        sign_dir = self.cfg.output_dir / f"signed_{uuid.uuid4().hex[:8]}"
+        sign_dir.mkdir(parents=True, exist_ok=True)
+
+        signed: list[Path] = []
         for apk in apks:
-            args += ["-a", str(apk)]
-        # NOTE: -o (copy to folder) and --overwrite (in place) are mutually
-        # exclusive in uber-apk-signer; use only -o here.
-        args += ["-o", str(self.cfg.output_dir), "--allowResign"]
+            before = set(sign_dir.glob("*.apk"))
+            args: list[str] = ["-a", str(apk), "-o", str(sign_dir), "--allowResign"]
+            if self.cfg.keystore:
+                args += ["--ks", str(self.cfg.keystore)]
+                if self.cfg.keystore_pass:
+                    args += ["--ksPass", self.cfg.keystore_pass]
+                if self.cfg.key_alias:
+                    args += ["--ksAlias", self.cfg.key_alias]
+                if self.cfg.key_pass:
+                    args += ["--ksKeyPass", self.cfg.key_pass]
+            self.tools.uber_apk_signer(*args)
+            after = set(sign_dir.glob("*.apk"))
+            new_files = after - before
+            if len(new_files) != 1:
+                raise ToolError(
+                    f"Signing {apk.name} produced {len(new_files)} output(s), expected 1"
+                )
+            signed.append(new_files.pop())
 
-        if self.cfg.keystore:
-            args += ["--ks", str(self.cfg.keystore)]
-            if self.cfg.keystore_pass:
-                args += ["--ksPass", self.cfg.keystore_pass]
-            if self.cfg.key_alias:
-                args += ["--ksAlias", self.cfg.key_alias]
-            if self.cfg.key_pass:
-                args += ["--ksKeyPass", self.cfg.key_pass]
-            log.info("Signing %d APK(s) with keystore %s", len(apks), self.cfg.keystore)
-        else:
-            log.info("Signing %d APK(s) with an auto-generated debug key", len(apks))
+        if len(signed) != len(apks):
+            raise ToolError(
+                f"Signed {len(signed)} APK(s) but expected {len(apks)}"
+            )
+        return sorted(signed, key=lambda p: p.name.lower())
 
-        self.tools.uber_apk_signer(*args)
-
-        signed = sorted(self.cfg.output_dir.glob("*-aligned-*Signed*.apk"))
-        if not signed:
-            # uber-apk-signer naming varies by version; fall back to any apk.
-            signed = sorted(self.cfg.output_dir.glob("*.apk"))
-        return signed
-
-    # ------------------------------------------------------------------ run
     def run(self) -> PipelineResult:
         apk_set = resolve_source(self.cfg.source, self.cfg.work_dir)
         log.info(
@@ -126,9 +131,6 @@ class Pipeline:
             return PipelineResult(apk_set, report, [], self.cfg.output_dir)
 
         rebuilt = self._build(decoded)
-
-        # The rebuilt base replaces the original base; splits are copied as-is
-        # and co-signed so the install set shares one signature.
         to_sign = [rebuilt, *apk_set.splits]
         signed = self._sign(to_sign)
 

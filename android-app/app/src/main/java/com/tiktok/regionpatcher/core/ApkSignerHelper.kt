@@ -13,6 +13,7 @@ import javax.security.auth.x500.X500Principal
 
 /**
  * Signs patched APKs with a persistent key in AndroidKeyStore.
+ * Output files keep the original APK name so PackageInstaller split sessions work.
  */
 object ApkSignerHelper {
 
@@ -31,18 +32,15 @@ object ApkSignerHelper {
             .sign()
     }
 
+    /** Signs each APK, preserving the original filename (required for split installs). */
     fun signAll(inputs: List<File>, outputDir: File): List<File> {
         outputDir.mkdirs()
         return inputs.map { input ->
-            val out = File(outputDir, signedName(input.name))
+            val out = File(outputDir, input.name)
+            if (out.exists()) out.delete()
             sign(input, out)
             out
         }
-    }
-
-    private fun signedName(original: String): String {
-        val base = original.removeSuffix(".apk")
-        return "${base}-patched-signed.apk"
     }
 
     private fun loadOrCreateKey(): Pair<java.security.PrivateKey, List<X509Certificate>> {

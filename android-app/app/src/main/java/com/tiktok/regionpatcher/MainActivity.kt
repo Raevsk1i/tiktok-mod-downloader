@@ -9,10 +9,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import com.tiktok.regionpatcher.core.PatchCancelledException
 import com.tiktok.regionpatcher.core.PatchPipeline
 import com.tiktok.regionpatcher.core.TikTokDetector
 import com.tiktok.regionpatcher.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -23,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val pipeline by lazy { PatchPipeline(this) }
     private var detectedPackage: String? = null
+    private var patchJob: Job? = null
 
     private val pickApkLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -43,8 +47,8 @@ class MainActivity : AppCompatActivity() {
                 setStatus(getString(R.string.tiktok_not_found))
                 return@setOnClickListener
             }
-            runPatch {
-                pipeline.patchInstalledTikTok(install, workDir(), ::setStatus)
+            runPatch { isCancelled ->
+                pipeline.patchInstalledTikTok(install, workDir(), ::setStatus, isCancelled)
             }
         }
 
@@ -79,15 +83,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun patchFromUri(uri: Uri) {
-        runPatch {
+        runPatch { isCancelled ->
             val local = copyUriToCache(uri)
-            pipeline.patchFromUserApk(local, workDir(), ::setStatus)
+            try {
+                pipeline.patchFromUserApk(local, workDir(), ::setStatus, isCancelled)
+            } finally {
+                local.delete()
+            }
         }
     }
 
     private fun copyUriToCache(uri: Uri): File {
-        val name = queryDisplayName(uri) ?: "picked.apk"
-        val out = File(cacheDir, name)
+        val rawName = queryDisplayName(uri) ?: "picked.apk"
+        val safeName = File(rawName).name
+            .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            .take(120)
+            .ifBlank { "picked.apk" }
+        val out = File(cacheDir, "picked_${System.currentTimeMillis()}_$safeName")
         contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(out).use { output -> input.copyTo(output) }
         } ?: throw IllegalStateException("Не удалось прочитать файл")
@@ -104,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun runPatch(block: suspend () -> PatchPipeline.Result) {
+    private fun runPatch(block: suspend (isCancelled: () -> Boolean) -> PatchPipeline.Result) {
         if (!packageManager.canRequestPackageInstalls()) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -115,20 +127,27 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        patchJob?.cancel()
         setBusy(true)
-        lifecycleScope.launch {
+        patchJob = lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.Default) { block() }
-                setStatus(getString(R.string.done) + "\n" + result.report.summary())
-                pipeline.installApks(result.signedApks)
-            } catch (e: OutOfMemoryError) {
+                val result = withContext(Dispatchers.Default) {
+                    block { !isActive }
+                }
+                setStatus(getString(R.string.install_prompt) + "\n" + result.report.summary())
+                pipeline.installApks(result.signedApks, result.packageName)
+            } catch (_: PatchCancelledException) {
+                setStatus("Патч отменён")
+            } catch (_: OutOfMemoryError) {
+                cleanupWorkDirs()
                 setStatus(
-                    "Недостаточно памяти для патча. Закройте другие приложения и попробуйте снова.",
+                    "Недостаточно памяти. Закройте другие приложения и перезапустите приложение.",
                 )
             } catch (e: Exception) {
                 setStatus(getString(R.string.error_prefix, e.message ?: e.toString()))
             } finally {
                 setBusy(false)
+                patchJob = null
             }
         }
     }
@@ -138,10 +157,15 @@ class MainActivity : AppCompatActivity() {
         mkdirs()
     }
 
+    private fun cleanupWorkDirs() {
+        File(cacheDir, "patch_work").deleteRecursively()
+    }
+
     private fun setBusy(busy: Boolean) {
         binding.progressBar.visibility = if (busy) View.VISIBLE else View.GONE
         binding.patchButton.isEnabled = !busy
         binding.pickApkButton.isEnabled = !busy
+        binding.uninstallButton.isEnabled = !busy
         if (busy) setStatus(getString(R.string.working))
     }
 
