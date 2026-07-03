@@ -4,7 +4,8 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
-dist/
+dist/*
+!dist/*.apk
 .venv/
 venv/
 
@@ -15,7 +16,6 @@ venv/
 # Pipeline scratch + outputs
 work/
 out/
-*.apk
 *.apk.idsig
 *.xapk
 *.apks
@@ -24,4 +24,8 @@ out/
 *.jks
 
 # pytest
-.pytest_cache/
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/gradle.zip
+android-app/local.properties
