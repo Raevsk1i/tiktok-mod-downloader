@@ -118,9 +118,13 @@ class MainActivity : AppCompatActivity() {
         setBusy(true)
         lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { block() }
+                val result = withContext(Dispatchers.Default) { block() }
                 setStatus(getString(R.string.done) + "\n" + result.report.summary())
                 pipeline.installApks(result.signedApks)
+            } catch (e: OutOfMemoryError) {
+                setStatus(
+                    "Недостаточно памяти для патча. Закройте другие приложения и попробуйте снова.",
+                )
             } catch (e: Exception) {
                 setStatus(getString(R.string.error_prefix, e.message ?: e.toString()))
             } finally {

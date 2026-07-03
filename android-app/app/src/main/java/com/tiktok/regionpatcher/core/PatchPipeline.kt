@@ -75,9 +75,9 @@ class PatchPipeline(private val context: Context) {
             ?: apks.first()
         val others = apks.filter { it != baseApk }
 
-        onProgress("Патчу dex в ${baseApk.name}…")
+        onProgress("Патчу dex в ${baseApk.name} (может занять несколько минут)…")
         val patchedBase = File(patchedDir, baseApk.name)
-        val baseReport = ApkDexPatcher.patchApk(baseApk, patchedBase, region)
+        val baseReport = ApkDexPatcher.patchApk(baseApk, patchedBase, region, onProgress)
         report.scannedDexFiles += baseReport.scannedDexFiles
         report.patchedSites += baseReport.patchedSites
         report.details.addAll(baseReport.details)
