@@ -99,7 +99,7 @@ class PatchPipeline(private val context: Context) {
         onProgress("Подписываю ${toSign.size} APK…")
         val signedDir = File(context.filesDir, "patched")
         signedDir.deleteRecursively()
-        val signed = ApkSignerHelper.signAll(toSign, signedDir)
+        val signed = ApkSignerHelper.signAll(context, toSign, signedDir)
 
         onProgress("Готово к установке")
         return Result(report, signed, packageName)
