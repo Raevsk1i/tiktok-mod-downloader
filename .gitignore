@@ -22,6 +22,7 @@ out/
 *.apkm
 *.keystore
 *.jks
+!android-app/app/src/main/assets/patch.keystore
 
 # pytest
 android-app/.gradle/
